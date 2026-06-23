@@ -4,10 +4,11 @@ import process from "node:process";
 /** Drives the running HTTP server exactly as the browser does: start a run,
  *  read the SSE trace, auto-approve at the checkpoint, assert it completes. */
 const BASE = process.env.BASE ?? "http://localhost:8787";
+const SCENARIO = process.env.SCENARIO ?? "sales";
 
-const sample = await (await fetch(BASE + "/api/sample")).json();
+const sample = await (await fetch(BASE + "/api/sample?scenario=" + SCENARIO)).json();
 const { runId } = await (
-  await fetch(BASE + "/api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ inquiry: sample.inquiry }) })
+  await fetch(BASE + "/api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ inquiry: sample.inquiry, scenario: SCENARIO }) })
 ).json();
 
 const resp = await fetch(BASE + "/api/stream?runId=" + runId);
@@ -45,10 +46,17 @@ outer: while (true) {
   }
 }
 
-console.log("trace kinds:", kinds.join(" → "));
-console.log("outcome:", outcome?.output);
+console.log(`[${SCENARIO}] trace kinds:`, kinds.join(" → "));
+console.log(`[${SCENARIO}] outcome:`, outcome?.output);
 assert.ok(outcome?.completed, "workflow should complete via the HTTP/SSE path");
 assert.ok(approved, "approval checkpoint should have fired");
-assert.ok(String(outcome.output).includes("42300"), "outcome should reflect the computed quote");
-console.log("\n✅ INTEGRATION OK — server, SSE stream, and interactive approval all work");
+if (SCENARIO === "sales") assert.ok(String(outcome.output).includes("42300"), "outcome should reflect the computed quote");
+
+// Error-path checks
+const bogusStream = await fetch(BASE + "/api/stream?runId=does-not-exist");
+assert.equal(bogusStream.status, 404, "unknown run should 404");
+const bogusDecision = await fetch(BASE + "/api/decision", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ runId: "x", callId: "y", approved: true }) });
+assert.equal(bogusDecision.status, 404, "decision for unknown approval should 404");
+
+console.log(`\n✅ INTEGRATION OK [${SCENARIO}] — server, SSE, interactive approval, and error paths all work`);
 process.exit(0);
