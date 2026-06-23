@@ -1,0 +1,22 @@
+{
+  "name": "autopilot-agent",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Autopilot Agent — turns inbound business requests (sales inquiries, support tickets, alerts) into completed workflows, with human-in-the-loop approval. Built on Qwen models.",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=22.6.0" },
+  "scripts": {
+    "demo": "node --experimental-strip-types src/demo.ts",
+    "demo:bun": "bun run src/demo.ts",
+    "serve": "node --experimental-strip-types src/server.ts",
+    "serve:bun": "bun run src/server.ts",
+    "test": "node --experimental-strip-types test/run.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": ["ai-agent", "qwen", "workflow-automation", "tool-use", "human-in-the-loop"],
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^22.0.0"
+  }
+}

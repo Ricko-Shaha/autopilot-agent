@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Autopilot Agent</title>
+<style>
+  :root{
+    --bg:#0e1014; --panel:#161a22; --panel2:#1d222c; --line:#2a313d;
+    --text:#e7eaf0; --dim:#8b94a3; --accent:#f5a623; --accent2:#6ea8fe;
+    --ok:#3fb950; --bad:#f85149; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 -apple-system,Segoe UI,Roboto,sans-serif}
+  header{display:flex;align-items:center;gap:12px;padding:16px 22px;border-bottom:1px solid var(--line);background:var(--panel)}
+  header h1{font-size:17px;margin:0;font-weight:650;letter-spacing:.2px}
+  header .sub{color:var(--dim);font-size:13px}
+  .badge{margin-left:auto;font-size:12px;padding:4px 10px;border:1px solid var(--line);border-radius:999px;color:var(--accent2);background:var(--panel2)}
+  main{display:grid;grid-template-columns:minmax(320px,1fr) 1.4fr;gap:18px;padding:18px;max-width:1200px;margin:0 auto}
+  @media(max-width:840px){main{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card h2{font-size:13px;text-transform:uppercase;letter-spacing:.8px;color:var(--dim);margin:0 0 12px}
+  textarea{width:100%;min-height:190px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:11px;font:13px/1.5 var(--mono);resize:vertical}
+  button{font:600 14px/1 inherit;border:0;border-radius:8px;padding:11px 16px;cursor:pointer;color:#10131a;background:var(--accent)}
+  button:hover{filter:brightness(1.07)} button:disabled{opacity:.5;cursor:default;filter:none}
+  .run{width:100%;margin-top:12px}
+  #trace{display:flex;flex-direction:column;gap:8px;min-height:120px}
+  .row{display:flex;gap:10px;align-items:flex-start;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);animation:pop .25s ease}
+  @keyframes pop{from{opacity:0;transform:translateY(4px)}to{opacity:1}}
+  .row .ic{flex:0 0 22px;font-size:15px;text-align:center}
+  .row .tx{flex:1;min-width:0}
+  .row .tx .t{font-size:14px}
+  .row .tx .d{font:12px/1.45 var(--mono);color:var(--dim);white-space:pre-wrap;word-break:break-word;margin-top:3px}
+  .row.tool{border-color:#33415a}
+  .row.result{opacity:.85}
+  .approval{border:1px solid var(--accent);background:#241d10}
+  .approval .head{display:flex;align-items:center;gap:8px;color:var(--accent);font-weight:700;margin-bottom:8px}
+  .kv{font:12px/1.6 var(--mono);color:var(--dim)}
+  .approval textarea{min-height:150px;margin:8px 0}
+  .btns{display:flex;gap:10px}
+  .btns .ok{background:var(--ok);color:#08130a}
+  .btns .no{background:var(--bad);color:#1a0606}
+  .outcome{margin-top:12px;padding:13px 15px;border-radius:10px;border:1px solid var(--ok);background:#0f1f13;color:#bff5c8;font-weight:600;display:none}
+  .outcome.bad{border-color:var(--bad);background:#1f1010;color:#ffc9c4}
+  .meta{color:var(--dim);font-size:12px;margin-top:6px}
+</style>
+</head>
+<body>
+<header>
+  <h1>⚡ Autopilot Agent</h1>
+  <span class="sub">inbound request → completed workflow, with a human checkpoint</span>
+  <span class="badge" id="provider">…</span>
+</header>
+<main>
+  <section class="card">
+    <h2>Inbound request</h2>
+    <select id="scenario" style="width:100%;margin-bottom:10px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px;font:13px var(--mono)"></select>
+    <textarea id="inquiry" spellcheck="false"></textarea>
+    <button class="run" id="runBtn">▶ Run Autopilot</button>
+    <div class="meta">The agent reads this, calls the tools it needs, and pauses for your approval before any irreversible action. Switch workflows above — same engine, different tools.</div>
+  </section>
+  <section class="card">
+    <h2>Live agent trace</h2>
+    <div id="trace"></div>
+    <div class="outcome" id="outcome"></div>
+  </section>
+</main>
+<script>
+const $ = (s)=>document.querySelector(s);
+const trace = $("#trace"), outcome = $("#outcome");
+let runId = null, es = null;
+
+const scenarioSel = $("#scenario");
+async function loadSample(){ const d = await (await fetch("/api/sample?scenario="+scenarioSel.value)).json(); $("#inquiry").value=d.inquiry; $("#provider").textContent="provider: "+d.provider; }
+fetch("/api/scenarios").then(r=>r.json()).then(d=>{
+  $("#provider").textContent="provider: "+d.provider;
+  scenarioSel.innerHTML = d.scenarios.map(s=>`<option value="${s.key}">${s.label}</option>`).join("");
+  loadSample();
+});
+scenarioSel.onchange = loadSample;
+
+const ICON = {task_received:"📥",model_turn:"🧠",tool_call:"🔧",tool_result:"📦",approval_requested:"🔔",approval_decision:"🗳️",error:"❌",completed:"✅"};
+
+function addRow(cls, ic, title, detail){
+  const row=document.createElement("div");
+  row.className="row "+(cls||"");
+  row.innerHTML=`<div class="ic">${ic}</div><div class="tx"><div class="t"></div><div class="d"></div></div>`;
+  row.querySelector(".t").textContent=title;
+  if(detail){ row.querySelector(".d").textContent=detail; } else { row.querySelector(".d").remove(); }
+  trace.appendChild(row); row.scrollIntoView({block:"nearest"});
+  return row;
+}
+
+function approvalCard(callId, args){
+  const card=document.createElement("div");
+  card.className="row approval";
+  card.innerHTML=`
+    <div class="ic">🔔</div>
+    <div class="tx">
+      <div class="head">Approval required — email the customer?</div>
+      <div class="kv">to: ${args.to||""}\nsubject: ${args.subject||""}</div>
+      <textarea>${(args.body||"").replace(/</g,"&lt;")}</textarea>
+      <div class="btns">
+        <button class="ok">✅ Approve & send</button>
+        <button class="no">❌ Reject</button>
+      </div>
+    </div>`;
+  const ta=card.querySelector("textarea");
+  const decide=(approved)=>{
+    card.querySelectorAll("button").forEach(b=>b.disabled=true);
+    fetch("/api/decision",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({runId, callId, approved, editedBody: approved? ta.value : undefined})});
+    card.querySelector(".head").textContent = approved ? "✅ Approved — sending" : "❌ Rejected — held";
+  };
+  card.querySelector(".ok").onclick=()=>decide(true);
+  card.querySelector(".no").onclick=()=>decide(false);
+  trace.appendChild(card); card.scrollIntoView({block:"nearest"});
+}
+
+function handle(e){
+  const d = e.data || {};
+  if(e.kind==="completed" && e.summary==="DONE"){
+    outcome.style.display="block";
+    outcome.className = "outcome" + (d.completed? "" : " bad");
+    outcome.textContent = d.output || "done";
+    if(es) es.close();
+    $("#runBtn").disabled=false;
+    return;
+  }
+  switch(e.kind){
+    case "task_received": addRow("","📥","Task received"); break;
+    case "model_turn": if(d.content) addRow("","🧠",d.content); break;
+    case "tool_call": addRow("tool","🔧",e.summary, d.args?JSON.stringify(d.args):""); break;
+    case "tool_result": addRow("result","📦",e.summary, d.result?truncate(JSON.stringify(d.result)):""); break;
+    case "approval_requested": approvalCard(d.call.id, d.call.arguments||{}); break;
+    case "approval_decision": addRow("","🗳️", e.summary); break;
+    case "completed": addRow("","✅","Workflow completed"); break;
+    case "error": addRow("","❌", e.summary); break;
+  }
+}
+function truncate(s){ return s.length>240? s.slice(0,240)+"…" : s; }
+
+$("#runBtn").onclick = async ()=>{
+  trace.innerHTML=""; outcome.style.display="none"; $("#runBtn").disabled=true;
+  const r = await fetch("/api/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({inquiry:$("#inquiry").value, scenario:scenarioSel.value})});
+  runId = (await r.json()).runId;
+  es = new EventSource("/api/stream?runId="+runId);
+  es.addEventListener("audit",(ev)=>handle(JSON.parse(ev.data)));
+  es.onerror=()=>{ /* stream ends after completion */ };
+};
+</script>
+</body>
+</html>
